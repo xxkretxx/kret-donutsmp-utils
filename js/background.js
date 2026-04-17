@@ -1,16 +1,16 @@
-// ============================================
-// Animated particle network background
-// Thin white lines + pink glow near cursor
-// ============================================
+// ============================================================
+// Particle background — subtle layer on top of aurora gradient
+// Dust particles + soft pink lines that react to cursor
+// ============================================================
 (function () {
   const canvas = document.getElementById('bg-canvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
   const DPR = Math.min(window.devicePixelRatio || 1, 2);
-  const MAX_DIST = 150;
-  const MOUSE_RADIUS = 220;
-  const BASE_SPEED = 0.22;
+  const MAX_DIST = 160;
+  const MOUSE_RADIUS = 240;
+  const BASE_SPEED = 0.18;
 
   let W, H, particles = [];
   const MOUSE = { x: null, y: null };
@@ -24,9 +24,8 @@
   }
 
   function initParticles() {
-    // Density scales with screen, capped
     const area = window.innerWidth * window.innerHeight;
-    const count = Math.min(95, Math.max(35, Math.floor(area / 14000)));
+    const count = Math.min(80, Math.max(28, Math.floor(area / 18000)));
     particles = [];
     for (let i = 0; i < count; i++) {
       particles.push({
@@ -34,10 +33,8 @@
         y: Math.random() * H,
         vx: (Math.random() - 0.5) * BASE_SPEED * DPR,
         vy: (Math.random() - 0.5) * BASE_SPEED * DPR,
-        r: (Math.random() * 1.2 + 0.4) * DPR,
-        baseR: 0
+        r: (Math.random() * 1.3 + 0.5) * DPR
       });
-      particles[i].baseR = particles[i].r;
     }
   }
 
@@ -48,7 +45,7 @@
     const mx = MOUSE.x !== null ? MOUSE.x * DPR : null;
     const my = MOUSE.y !== null ? MOUSE.y * DPR : null;
 
-    // ---------- Connecting lines ----------
+    // ---------- Connecting lines (subtle) ----------
     for (let i = 0; i < particles.length; i++) {
       const a = particles[i];
       for (let j = i + 1; j < particles.length; j++) {
@@ -59,25 +56,24 @@
           const d = Math.sqrt(d2);
           const alpha = 1 - d / maxDist;
 
-          // Pink boost if either endpoint is near the mouse
+          // Boost brightness/pinkness if near mouse
           let pinkBoost = 0;
           if (mx !== null) {
-            const aDist = Math.hypot(a.x - mx, a.y - my);
-            const bDist = Math.hypot(b.x - mx, b.y - my);
-            const closest = Math.min(aDist, bDist);
-            if (closest < mr) pinkBoost = 1 - closest / mr;
+            const midX = (a.x + b.x) / 2;
+            const midY = (a.y + b.y) / 2;
+            const md = Math.hypot(midX - mx, midY - my);
+            if (md < mr) pinkBoost = 1 - md / mr;
           }
 
-          if (pinkBoost > 0.02) {
-            // Blend white -> pink
-            const r = Math.round(255);
-            const g = Math.round(255 * (1 - pinkBoost * 0.82));
-            const b2 = Math.round(255 * (1 - pinkBoost * 0.42));
-            ctx.strokeStyle = `rgba(${r},${g},${b2},${alpha * (0.22 + pinkBoost * 0.5)})`;
-            ctx.lineWidth = DPR * (1 + pinkBoost * 0.4);
+          if (pinkBoost > 0.05) {
+            const r = 255;
+            const g = Math.round(180 - pinkBoost * 135);
+            const b2 = Math.round(220 - pinkBoost * 70);
+            ctx.strokeStyle = `rgba(${r},${g},${b2},${alpha * (0.18 + pinkBoost * 0.55)})`;
+            ctx.lineWidth = DPR * (0.8 + pinkBoost * 0.7);
           } else {
-            ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.18})`;
-            ctx.lineWidth = DPR;
+            ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.09})`;
+            ctx.lineWidth = DPR * 0.7;
           }
 
           ctx.beginPath();
@@ -88,59 +84,57 @@
       }
     }
 
-    // ---------- Mouse tether lines ----------
+    // ---------- Mouse tether ----------
     if (mx !== null) {
       for (const p of particles) {
         const dx = p.x - mx, dy = p.y - my;
         const d = Math.sqrt(dx*dx + dy*dy);
         if (d < mr) {
           const alpha = 1 - d / mr;
-          ctx.strokeStyle = `rgba(255, 45, 146, ${alpha * 0.55})`;
-          ctx.lineWidth = DPR * (0.8 + alpha * 0.6);
+          ctx.strokeStyle = `rgba(255, 45, 146, ${alpha * 0.6})`;
+          ctx.lineWidth = DPR * (0.8 + alpha * 0.8);
           ctx.beginPath();
           ctx.moveTo(p.x, p.y);
           ctx.lineTo(mx, my);
           ctx.stroke();
 
-          // Gentle repulsion so particles "bloom" out from cursor
-          const force = alpha * 0.35;
+          // Gentle attraction/repulsion
+          const force = alpha * 0.25;
           p.vx += (dx / (d + 0.001)) * force;
           p.vy += (dy / (d + 0.001)) * force;
         }
       }
 
-      // Soft pink glow ring at cursor
-      const grad = ctx.createRadialGradient(mx, my, 0, mx, my, mr * 0.6);
-      grad.addColorStop(0, 'rgba(255, 45, 146, 0.18)');
+      // Soft pink halo at cursor
+      const grad = ctx.createRadialGradient(mx, my, 0, mx, my, mr * 0.55);
+      grad.addColorStop(0, 'rgba(255, 45, 146, 0.14)');
+      grad.addColorStop(0.5, 'rgba(176, 71, 255, 0.05)');
       grad.addColorStop(1, 'rgba(255, 45, 146, 0)');
       ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.arc(mx, my, mr * 0.6, 0, Math.PI * 2);
+      ctx.arc(mx, my, mr * 0.55, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // ---------- Move + draw particles ----------
+    // ---------- Particles ----------
     for (const p of particles) {
       p.x += p.vx;
       p.y += p.vy;
-      // friction damps mouse boost but keeps drift
-      p.vx *= 0.97;
-      p.vy *= 0.97;
-      // keep a small baseline drift
-      const target = BASE_SPEED * DPR * 0.8;
+      p.vx *= 0.975;
+      p.vy *= 0.975;
+
+      const target = BASE_SPEED * DPR * 0.7;
       const speed = Math.hypot(p.vx, p.vy);
       if (speed < target * 0.4) {
         p.vx += (Math.random() - 0.5) * 0.04;
         p.vy += (Math.random() - 0.5) * 0.04;
       }
 
-      // wrap around edges
       if (p.x < -20) p.x = W + 20;
       if (p.x > W + 20) p.x = -20;
       if (p.y < -20) p.y = H + 20;
       if (p.y > H + 20) p.y = -20;
 
-      // Brighten particles near mouse with a subtle pink tint
       let near = 0;
       if (mx !== null) {
         const d = Math.hypot(p.x - mx, p.y - my);
@@ -148,17 +142,18 @@
       }
 
       if (near > 0.05) {
-        ctx.fillStyle = `rgba(255, ${Math.round(255 - near * 200)}, ${Math.round(255 - near * 110)}, ${0.7 + near * 0.3})`;
-        // subtle halo
+        const g = Math.round(255 - near * 210);
+        const b = Math.round(255 - near * 109);
+        ctx.fillStyle = `rgba(255,${g},${b},${0.8 + near * 0.2})`;
         ctx.shadowColor = 'rgba(255, 45, 146, 0.8)';
-        ctx.shadowBlur = near * 10 * DPR;
+        ctx.shadowBlur = near * 14 * DPR;
       } else {
-        ctx.fillStyle = 'rgba(255,255,255,0.72)';
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
         ctx.shadowBlur = 0;
       }
 
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.baseR * (1 + near * 0.6), 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, p.r * (1 + near * 0.7), 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
     }
