@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Admin · _._kret_._ DonutSMP Utils</title>
+<link rel="stylesheet" href="css/style.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='40' fill='%23ff2d92'/%3E%3C/svg%3E" />
+</head>
+<body>
+<canvas id="bg-canvas"></canvas>
+<div id="header-host"></div>
+
+<main>
+  <h1 style="font-size:32px;font-weight:800;margin-bottom:4px;">Admin panel</h1>
+  <p class="muted" style="margin-bottom:24px;">Add or remove categories and entries.</p>
+
+  <div class="admin-grid">
+
+    <!-- ============ Add Entry ============ -->
+    <div class="admin-card" style="grid-column: 1 / -1;">
+      <h2 id="entry-form-title">Add new entry</h2>
+      <div id="entry-error"></div>
+      <div class="form-group">
+        <label>Title</label>
+        <input type="text" id="e-title" maxlength="100">
+      </div>
+      <div class="form-group">
+        <label>Category</label>
+        <select id="e-category"></select>
+      </div>
+      <div class="form-group">
+        <label>Difficulty</label>
+        <select id="e-difficulty">
+          <option value="easy">Easy</option>
+          <option value="medium" selected>Medium</option>
+          <option value="hard">Hard</option>
+          <option value="expert">Expert</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <textarea id="e-description" rows="4" placeholder="How it works, strategy, etc."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Materials needed</label>
+        <textarea id="e-materials" rows="3" placeholder="- 64 obsidian&#10;- 2 ender pearls&#10;..."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Tags (comma separated)</label>
+        <input type="text" id="e-tags" placeholder="pvp, auto, cheap">
+      </div>
+      <div class="form-group">
+        <label>Screenshot (upload)</label>
+        <input type="file" id="e-screenshot" accept="image/*">
+        <div class="small muted" style="margin-top:6px;" id="e-screenshot-current"></div>
+      </div>
+      <div class="form-group">
+        <label>Video URL (YouTube, Streamable, or direct mp4)</label>
+        <input type="url" id="e-video" placeholder="https://streamable.com/... or https://youtu.be/...">
+      </div>
+      <div class="row">
+        <button class="btn btn-primary" id="save-entry">Save entry</button>
+        <button class="btn btn-ghost hidden" id="cancel-edit">Cancel edit</button>
+      </div>
+    </div>
+
+    <!-- ============ Existing entries ============ -->
+    <div class="admin-card">
+      <h2>Existing entries</h2>
+      <div class="admin-list" id="entries-list"></div>
+    </div>
+
+    <!-- ============ Categories ============ -->
+    <div class="admin-card">
+      <h2>Categories</h2>
+      <div id="cat-error"></div>
+      <div class="form-group">
+        <label>Add category</label>
+        <div class="row">
+          <input type="text" id="new-cat-name" placeholder="Name" maxlength="30">
+          <input type="text" id="new-cat-icon" placeholder="📦" maxlength="4" style="width:80px;">
+          <button class="btn btn-primary" id="add-cat">Add</button>
+        </div>
+      </div>
+      <div class="admin-list" id="cats-list"></div>
+    </div>
+
+  </div>
+</main>
+
+<div id="footer-host"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/background.js"></script>
+<script>
+(async function () {
+  await KU.renderHeader();
+  KU.renderFooter();
+
+  const user = await KU.requireAdmin();
+  if (!user) return;
+
+  let categories = [];
+  let entries = [];
+  let editingId = null;
+  let existingScreenshot = null;
+
+  // ---------- Load ----------
+  async function loadCategories() {
+    const { data } = await db.from('categories').select('*').order('name');
+    categories = data || [];
+    const sel = document.getElementById('e-category');
+    sel.innerHTML = categories.map(c =>
+      `<option value="${c.id}">${c.icon || ''} ${KU.escapeHtml(c.name)}</option>`
+    ).join('');
+    const listEl = document.getElementById('cats-list');
+    if (!categories.length) {
+      listEl.innerHTML = '<div class="muted small">No categories yet.</div>';
+    } else {
+      listEl.innerHTML = categories.map(c => `
+        <div class="admin-list-item">
+          <span>${c.icon || ''} ${KU.escapeHtml(c.name)}</span>
+          <div class="actions">
+            <button class="del" data-del-cat="${c.id}">Delete</button>
+          </div>
+        </div>
+      `).join('');
+      listEl.querySelectorAll('[data-del-cat]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Delete this category? Entries in it will stay but become uncategorized.')) return;
+          const { error } = await db.from('categories').delete().eq('id', btn.dataset.delCat);
+          if (error) { KU.toast(error.message, 'error'); return; }
+          KU.toast('Category deleted', 'ok');
+          await loadCategories();
+          await loadEntries();
+        });
+      });
+    }
+  }
+
+  async function loadEntries() {
+    const { data } = await db.from('entries')
+      .select('*, categories(name, icon)')
+      .order('created_at', { ascending: false });
+    entries = data || [];
+    const listEl = document.getElementById('entries-list');
+    if (!entries.length) {
+      listEl.innerHTML = '<div class="muted small">No entries yet.</div>';
+      return;
+    }
+    listEl.innerHTML = entries.map(e => `
+      <div class="admin-list-item">
+        <span>${e.categories?.icon || ''} ${KU.escapeHtml(e.title)}</span>
+        <div class="actions">
+          <button data-edit="${e.id}">Edit</button>
+          <button class="del" data-del="${e.id}">Delete</button>
+        </div>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('[data-edit]').forEach(btn => {
+      btn.addEventListener('click', () => loadIntoForm(btn.dataset.edit));
+    });
+    listEl.querySelectorAll('[data-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Delete this entry permanently?')) return;
+        const id = btn.dataset.del;
+        // delete screenshot from storage if exists
+        const e = entries.find(x => x.id === id);
+        if (e?.screenshot_url) {
+          const path = extractStoragePath(e.screenshot_url);
+          if (path) await db.storage.from('screenshots').remove([path]);
+        }
+        const { error } = await db.from('entries').delete().eq('id', id);
+        if (error) { KU.toast(error.message, 'error'); return; }
+        KU.toast('Entry deleted', 'ok');
+        if (editingId === id) resetForm();
+        await loadEntries();
+      });
+    });
+  }
+
+  function extractStoragePath(publicUrl) {
+    try {
+      const u = new URL(publicUrl);
+      const idx = u.pathname.indexOf('/screenshots/');
+      if (idx === -1) return null;
+      return u.pathname.slice(idx + '/screenshots/'.length);
+    } catch { return null; }
+  }
+
+  function loadIntoForm(id) {
+    const e = entries.find(x => x.id === id);
+    if (!e) return;
+    editingId = id;
+    existingScreenshot = e.screenshot_url;
+    document.getElementById('entry-form-title').textContent = 'Edit entry';
+    document.getElementById('e-title').value = e.title || '';
+    document.getElementById('e-category').value = e.category_id || '';
+    document.getElementById('e-difficulty').value = e.difficulty || 'medium';
+    document.getElementById('e-description').value = e.description || '';
+    document.getElementById('e-materials').value = e.materials || '';
+    document.getElementById('e-tags').value = (e.tags || []).join(', ');
+    document.getElementById('e-video').value = e.video_url || '';
+    document.getElementById('e-screenshot').value = '';
+    document.getElementById('e-screenshot-current').textContent =
+      e.screenshot_url ? 'Current screenshot uploaded. Choose a new file to replace it.' : '';
+    document.getElementById('cancel-edit').classList.remove('hidden');
+    document.getElementById('save-entry').textContent = 'Save changes';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function resetForm() {
+    editingId = null;
+    existingScreenshot = null;
+    document.getElementById('entry-form-title').textContent = 'Add new entry';
+    ['e-title','e-description','e-materials','e-tags','e-video'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    document.getElementById('e-difficulty').value = 'medium';
+    document.getElementById('e-screenshot').value = '';
+    document.getElementById('e-screenshot-current').textContent = '';
+    document.getElementById('cancel-edit').classList.add('hidden');
+    document.getElementById('save-entry').textContent = 'Save entry';
+    document.getElementById('entry-error').innerHTML = '';
+  }
+
+  // ---------- Save entry ----------
+  document.getElementById('save-entry').addEventListener('click', async () => {
+    const errBox = document.getElementById('entry-error');
+    errBox.innerHTML = '';
+
+    const title = document.getElementById('e-title').value.trim();
+    const category_id = document.getElementById('e-category').value || null;
+    const difficulty = document.getElementById('e-difficulty').value;
+    const description = document.getElementById('e-description').value.trim();
+    const materials = document.getElementById('e-materials').value.trim();
+    const tags = document.getElementById('e-tags').value
+      .split(',').map(t => t.trim()).filter(Boolean).slice(0, 12);
+    const video_url = document.getElementById('e-video').value.trim();
+    const file = document.getElementById('e-screenshot').files[0];
+
+    if (!title) { errBox.innerHTML = '<div class="alert alert-error">Title is required.</div>'; return; }
+
+    const btn = document.getElementById('save-entry');
+    btn.disabled = true;
+
+    let screenshot_url = existingScreenshot;
+
+    // Upload screenshot if a new one was picked
+    if (file) {
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+      const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const { error: upErr } = await db.storage
+        .from('screenshots')
+        .upload(path, file, { cacheControl: '3600', upsert: false });
+      if (upErr) {
+        btn.disabled = false;
+        errBox.innerHTML = `<div class="alert alert-error">Upload failed: ${KU.escapeHtml(upErr.message)}</div>`;
+        return;
+      }
+      const { data: { publicUrl } } = db.storage.from('screenshots').getPublicUrl(path);
+      screenshot_url = publicUrl;
+
+      // Delete old screenshot if replacing
+      if (editingId && existingScreenshot) {
+        const oldPath = extractStoragePath(existingScreenshot);
+        if (oldPath) await db.storage.from('screenshots').remove([oldPath]);
+      }
+    }
+
+    const payload = {
+      title, category_id, difficulty, description, materials,
+      tags, video_url: video_url || null, screenshot_url
+    };
+
+    let error;
+    if (editingId) {
+      ({ error } = await db.from('entries').update(payload).eq('id', editingId));
+    } else {
+      payload.slug = KU.slugify(title) + '-' + Math.random().toString(36).slice(2, 6);
+      payload.author_id = user.id;
+      ({ error } = await db.from('entries').insert(payload));
+    }
+
+    btn.disabled = false;
+
+    if (error) {
+      errBox.innerHTML = `<div class="alert alert-error">${KU.escapeHtml(error.message)}</div>`;
+      return;
+    }
+    KU.toast(editingId ? 'Entry updated' : 'Entry added', 'ok');
+    resetForm();
+    await loadEntries();
+  });
+
+  document.getElementById('cancel-edit').addEventListener('click', resetForm);
+
+  // ---------- Add category ----------
+  document.getElementById('add-cat').addEventListener('click', async () => {
+    const errBox = document.getElementById('cat-error');
+    errBox.innerHTML = '';
+    const name = document.getElementById('new-cat-name').value.trim();
+    const icon = document.getElementById('new-cat-icon').value.trim() || '📦';
+    if (!name) { errBox.innerHTML = '<div class="alert alert-error">Name required.</div>'; return; }
+    const slug = KU.slugify(name);
+    const { error } = await db.from('categories').insert({ slug, name, icon });
+    if (error) {
+      errBox.innerHTML = `<div class="alert alert-error">${KU.escapeHtml(error.message)}</div>`;
+      return;
+    }
+    document.getElementById('new-cat-name').value = '';
+    document.getElementById('new-cat-icon').value = '';
+    KU.toast('Category added', 'ok');
+    await loadCategories();
+  });
+
+  await loadCategories();
+  await loadEntries();
+})();
+</script>
+</body>
+</html>

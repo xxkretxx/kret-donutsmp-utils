@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>_._kret_._ DonutSMP Utils</title>
+<meta name="description" content="Traps, farms, bases and exploits for DonutSMP by _._kret_._" />
+<link rel="stylesheet" href="css/style.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='40' fill='%23ff2d92'/%3E%3C/svg%3E" />
+</head>
+<body>
+<canvas id="bg-canvas"></canvas>
+<div id="header-host"></div>
+
+<main>
+  <section class="hero">
+    <h1>DonutSMP <span class="accent">tools &amp; tricks</span></h1>
+    <p>Traps, farms, bases and exploits — collected, tested and shared by _._kret_._.</p>
+  </section>
+
+  <div class="filters" id="filters"></div>
+
+  <div id="entries" class="grid"></div>
+  <div id="empty" class="empty hidden">Nothing here yet.</div>
+</main>
+
+<div id="footer-host"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/background.js"></script>
+<script>
+(async function () {
+  await KU.renderHeader();
+  KU.renderFooter();
+
+  const filtersEl = document.getElementById('filters');
+  const entriesEl = document.getElementById('entries');
+  const emptyEl = document.getElementById('empty');
+
+  let activeCategory = null; // null = all
+  let categories = [];
+  let entries = [];
+  let likeCounts = {};       // entry_id -> count
+  let commentCounts = {};    // entry_id -> count
+
+  async function loadCategories() {
+    const { data, error } = await db.from('categories').select('*').order('name');
+    if (error) { console.error(error); return; }
+    categories = data || [];
+    renderFilters();
+  }
+
+  function renderFilters() {
+    const chips = [
+      `<button class="filter-chip ${activeCategory === null ? 'active' : ''}" data-cat="">All</button>`,
+      ...categories.map(c => `
+        <button class="filter-chip ${activeCategory === c.id ? 'active' : ''}" data-cat="${c.id}">
+          ${c.icon || ''} ${KU.escapeHtml(c.name)}
+        </button>
+      `)
+    ];
+    filtersEl.innerHTML = chips.join('');
+    filtersEl.querySelectorAll('.filter-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeCategory = btn.dataset.cat || null;
+        renderFilters();
+        renderEntries();
+      });
+    });
+  }
+
+  async function loadEntries() {
+    const { data, error } = await db
+      .from('entries')
+      .select('*, categories(name, slug, icon)')
+      .order('created_at', { ascending: false });
+    if (error) { console.error(error); return; }
+    entries = data || [];
+
+    // Load counts in parallel
+    const ids = entries.map(e => e.id);
+    if (ids.length) {
+      const [{ data: likes }, { data: comments }] = await Promise.all([
+        db.from('likes').select('entry_id').in('entry_id', ids),
+        db.from('comments').select('entry_id').in('entry_id', ids)
+      ]);
+      likeCounts = {};
+      commentCounts = {};
+      (likes || []).forEach(l => { likeCounts[l.entry_id] = (likeCounts[l.entry_id] || 0) + 1; });
+      (comments || []).forEach(c => { commentCounts[c.entry_id] = (commentCounts[c.entry_id] || 0) + 1; });
+    }
+    renderEntries();
+  }
+
+  function renderEntries() {
+    const list = activeCategory
+      ? entries.filter(e => e.category_id === activeCategory)
+      : entries;
+    if (!list.length) {
+      entriesEl.innerHTML = '';
+      emptyEl.classList.remove('hidden');
+      return;
+    }
+    emptyEl.classList.add('hidden');
+    entriesEl.innerHTML = list.map(e => `
+      <a href="entry.html?slug=${encodeURIComponent(e.slug)}" class="card">
+        <div class="card-thumb">
+          ${e.screenshot_url
+            ? `<img src="${KU.escapeHtml(e.screenshot_url)}" alt="${KU.escapeHtml(e.title)}" loading="lazy">`
+            : `<div class="placeholder">${e.categories?.icon || '📦'}</div>`}
+        </div>
+        <div class="card-body">
+          <div class="card-cat">${e.categories ? KU.escapeHtml(e.categories.name) : 'Uncategorized'}</div>
+          <div class="card-title">${KU.escapeHtml(e.title)}</div>
+          <div class="card-meta">
+            <span class="difficulty ${e.difficulty}">${e.difficulty}</span>
+            <span class="stats">
+              <span>♥ ${likeCounts[e.id] || 0}</span>
+              <span>💬 ${commentCounts[e.id] || 0}</span>
+            </span>
+          </div>
+        </div>
+      </a>
+    `).join('');
+  }
+
+  await loadCategories();
+  await loadEntries();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Create account · _._kret_._ DonutSMP Utils</title>
+<link rel="stylesheet" href="css/style.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='40' fill='%23ff2d92'/%3E%3C/svg%3E" />
+</head>
+<body>
+<canvas id="bg-canvas"></canvas>
+<div id="header-host"></div>
+
+<main>
+  <div class="auth-wrap">
+    <!-- Step 1: register -->
+    <div id="step-signup">
+      <h1>Create account</h1>
+      <p class="sub">Pick a nickname, the rest is up to you.</p>
+      <div id="error-box"></div>
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="username" maxlength="24" placeholder="e.g. kret_fan_42">
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="email" autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="password" autocomplete="new-password" placeholder="At least 6 characters">
+      </div>
+      <button class="btn btn-primary" id="signup">Create account</button>
+      <div class="switch">Already have one? <a href="login.html">Sign in</a></div>
+    </div>
+
+    <!-- Step 2: optional 2FA setup -->
+    <div id="step-mfa" class="hidden">
+      <h1>Enable 2FA (optional)</h1>
+      <p class="sub">Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.) and enter the 6-digit code to enable 2FA.</p>
+      <div id="mfa-error"></div>
+      <div class="center" style="margin-bottom:16px;">
+        <img id="qr-img" style="width:200px;height:200px;background:#fff;padding:10px;border-radius:8px;" alt="2FA QR code">
+        <div class="small muted" style="margin-top:8px;">Or enter secret manually:
+          <code id="totp-secret" style="display:block;margin-top:4px;font-size:11px;word-break:break-all;"></code>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>6-digit code from app</label>
+        <input type="text" id="verify-code" inputmode="numeric" maxlength="6">
+      </div>
+      <button class="btn btn-primary" id="enable-2fa">Enable 2FA</button>
+      <div style="margin-top:10px;">
+        <button class="btn btn-ghost" id="skip-2fa" style="width:100%;">Skip for now</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="footer-host"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/background.js"></script>
+<script>
+(async function () {
+  await KU.renderHeader();
+  KU.renderFooter();
+
+  const errBox = document.getElementById('error-box');
+  const mfaErr = document.getElementById('mfa-error');
+  const signupStep = document.getElementById('step-signup');
+  const mfaStep = document.getElementById('step-mfa');
+
+  function showErr(box, msg) { box.innerHTML = `<div class="alert alert-error">${KU.escapeHtml(msg)}</div>`; }
+
+  document.getElementById('signup').addEventListener('click', async () => {
+    errBox.innerHTML = '';
+    const username = document.getElementById('username').value.trim();
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+
+    if (!/^[a-zA-Z0-9_.-]{3,24}$/.test(username)) {
+      showErr(errBox, 'Username: 3-24 chars, letters/numbers/._- only.');
+      return;
+    }
+    if (!email || password.length < 6) {
+      showErr(errBox, 'Email required and password must be at least 6 characters.');
+      return;
+    }
+
+    const btn = document.getElementById('signup');
+    btn.disabled = true;
+
+    // Check username availability
+    const { data: exists } = await db.from('profiles').select('id').eq('username', username).maybeSingle();
+    if (exists) { showErr(errBox, 'Username already taken.'); btn.disabled = false; return; }
+
+    const { error } = await db.auth.signUp({
+      email, password,
+      options: { data: { username } }
+    });
+    btn.disabled = false;
+    if (error) { showErr(errBox, error.message); return; }
+
+    // If email confirmation required, user might not be logged in yet
+    const { data: { session } } = await db.auth.getSession();
+    if (!session) {
+      signupStep.innerHTML = `
+        <h1>Check your email</h1>
+        <p class="sub">We sent a confirmation link to <strong>${KU.escapeHtml(email)}</strong>. Click it to activate your account, then sign in.</p>
+        <a href="login.html" class="btn btn-primary" style="width:100%;">Go to sign in</a>
+      `;
+      return;
+    }
+
+    // Proceed to 2FA setup
+    await startMfaEnrollment();
+  });
+
+  async function startMfaEnrollment() {
+    signupStep.classList.add('hidden');
+    mfaStep.classList.remove('hidden');
+
+    const { data, error } = await db.auth.mfa.enroll({
+      factorType: 'totp',
+      friendlyName: 'Authenticator ' + Date.now()
+    });
+    if (error) {
+      mfaStep.innerHTML = `
+        <div class="alert alert-error">${KU.escapeHtml(error.message)}</div>
+        <a href="index.html" class="btn btn-primary" style="width:100%;">Continue</a>
+      `;
+      return;
+    }
+
+    document.getElementById('qr-img').src = data.totp.qr_code;
+    document.getElementById('totp-secret').textContent = data.totp.secret;
+    const factorId = data.id;
+
+    document.getElementById('enable-2fa').addEventListener('click', async () => {
+      mfaErr.innerHTML = '';
+      const code = document.getElementById('verify-code').value.trim();
+      if (!/^\d{6}$/.test(code)) { showErr(mfaErr, 'Enter the 6-digit code.'); return; }
+      const btn = document.getElementById('enable-2fa');
+      btn.disabled = true;
+      const { data: ch, error: chErr } = await db.auth.mfa.challenge({ factorId });
+      if (chErr) { showErr(mfaErr, chErr.message); btn.disabled = false; return; }
+      const { error: vErr } = await db.auth.mfa.verify({
+        factorId, challengeId: ch.id, code
+      });
+      btn.disabled = false;
+      if (vErr) { showErr(mfaErr, vErr.message); return; }
+      KU.toast('2FA enabled!', 'ok');
+      setTimeout(() => { window.location.href = 'index.html'; }, 800);
+    });
+
+    document.getElementById('skip-2fa').addEventListener('click', async () => {
+      // Remove the pending factor
+      try { await db.auth.mfa.unenroll({ factorId }); } catch {}
+      window.location.href = 'index.html';
+    });
+  }
+})();
+</script>
+</body>
+</html>

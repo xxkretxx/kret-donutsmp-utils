@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Entry · _._kret_._ DonutSMP Utils</title>
+<link rel="stylesheet" href="css/style.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='40' fill='%23ff2d92'/%3E%3C/svg%3E" />
+</head>
+<body>
+<canvas id="bg-canvas"></canvas>
+<div id="header-host"></div>
+
+<main>
+  <div id="content" class="entry-detail"><div class="empty">Loading...</div></div>
+</main>
+
+<div id="footer-host"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/background.js"></script>
+<script>
+(async function () {
+  await KU.renderHeader();
+  KU.renderFooter();
+
+  const contentEl = document.getElementById('content');
+  const params = new URLSearchParams(location.search);
+  const slug = params.get('slug');
+  if (!slug) { contentEl.innerHTML = '<div class="empty">No entry selected.</div>'; return; }
+
+  const { data: entry, error } = await db
+    .from('entries')
+    .select('*, categories(name, slug, icon), profiles:author_id(username)')
+    .eq('slug', slug)
+    .maybeSingle();
+
+  if (error || !entry) {
+    contentEl.innerHTML = '<a href="index.html" class="back">← Back</a><div class="empty">Entry not found.</div>';
+    return;
+  }
+
+  const user = await KU.getCurrentUser();
+
+  // Load likes + comments
+  const [likesRes, commentsRes] = await Promise.all([
+    db.from('likes').select('*').eq('entry_id', entry.id),
+    db.from('comments')
+      .select('*, profiles(username)')
+      .eq('entry_id', entry.id)
+      .order('created_at', { ascending: true })
+  ]);
+  const likes = likesRes.data || [];
+  const comments = commentsRes.data || [];
+  const userLiked = user ? likes.some(l => l.user_id === user.id) : false;
+
+  const video = KU.videoEmbed(entry.video_url);
+  const tagsHtml = (entry.tags || []).map(t => `<span class="tag">#${KU.escapeHtml(t)}</span>`).join('');
+
+  contentEl.innerHTML = `
+    <a href="index.html" class="back">← Back to all</a>
+    <h1>${KU.escapeHtml(entry.title)}</h1>
+    <div class="entry-meta-row">
+      ${entry.categories ? `<span class="cat-tag">${entry.categories.icon || ''} ${KU.escapeHtml(entry.categories.name)}</span>` : ''}
+      <span class="difficulty ${entry.difficulty}">${entry.difficulty}</span>
+      <span>by ${KU.escapeHtml(entry.profiles?.username || '_._kret_._')}</span>
+      <span>· ${KU.timeAgo(entry.created_at)}</span>
+    </div>
+
+    ${entry.screenshot_url ? `<div class="media-block"><img src="${KU.escapeHtml(entry.screenshot_url)}" alt=""></div>` : ''}
+
+    ${video ? `
+      <div class="media-block">
+        ${video.type === 'iframe'
+          ? `<div class="video-wrap"><iframe src="${KU.escapeHtml(video.src)}" allow="autoplay; fullscreen; encrypted-media" allowfullscreen></iframe></div>`
+          : `<div class="video-wrap"><video src="${KU.escapeHtml(video.src)}" controls style="width:100%;height:100%;"></video></div>`
+        }
+      </div>
+    ` : ''}
+
+    <div class="like-row">
+      <button class="btn-like ${userLiked ? 'liked' : ''}" id="like-btn" ${!user ? 'disabled title="Sign in to like"' : ''}>
+        <span>♥</span>
+        <span id="like-count">${likes.length}</span>
+        <span class="small muted">${likes.length === 1 ? 'like' : 'likes'}</span>
+      </button>
+      ${!user ? '<span class="small muted">Sign in to like or comment</span>' : ''}
+    </div>
+
+    ${entry.description ? `
+      <div class="section">
+        <h2>Description</h2>
+        <div class="content">${KU.escapeHtml(entry.description)}</div>
+      </div>
+    ` : ''}
+
+    ${entry.materials ? `
+      <div class="section">
+        <h2>Materials needed</h2>
+        <div class="content">${KU.escapeHtml(entry.materials)}</div>
+      </div>
+    ` : ''}
+
+    ${tagsHtml ? `<div style="margin-bottom:24px;">${tagsHtml}</div>` : ''}
+
+    <div class="section">
+      <h2>Comments (${comments.length})</h2>
+      <div id="comments-list" class="comments-list"></div>
+      <div id="comment-box"></div>
+    </div>
+  `;
+
+  // ---------- Like handler ----------
+  const likeBtn = document.getElementById('like-btn');
+  let liked = userLiked;
+  let likeCount = likes.length;
+  if (likeBtn && user) {
+    likeBtn.addEventListener('click', async () => {
+      likeBtn.disabled = true;
+      if (liked) {
+        const { error } = await db.from('likes').delete()
+          .eq('entry_id', entry.id).eq('user_id', user.id);
+        if (!error) { liked = false; likeCount--; likeBtn.classList.remove('liked'); }
+      } else {
+        const { error } = await db.from('likes').insert({ entry_id: entry.id, user_id: user.id });
+        if (!error) { liked = true; likeCount++; likeBtn.classList.add('liked'); }
+      }
+      document.getElementById('like-count').textContent = likeCount;
+      likeBtn.disabled = false;
+    });
+  }
+
+  // ---------- Comments ----------
+  function renderComments() {
+    const listEl = document.getElementById('comments-list');
+    if (!comments.length) {
+      listEl.innerHTML = '<div class="muted small" style="padding:8px 0;">No comments yet. Be the first!</div>';
+      return;
+    }
+    listEl.innerHTML = comments.map(c => {
+      const name = c.profiles?.username || 'user';
+      const canDelete = user && (user.id === c.user_id || user.profile?.is_admin);
+      return `
+        <div class="comment" data-id="${c.id}">
+          <img class="comment-avatar" src="${KU.avatarUrl(name)}" alt="">
+          <div class="comment-body">
+            <div class="comment-head">
+              <span class="comment-user">${KU.escapeHtml(name)}</span>
+              <span class="comment-time">${KU.timeAgo(c.created_at)}</span>
+              ${canDelete ? `<button class="comment-delete" data-del="${c.id}">delete</button>` : ''}
+            </div>
+            <div class="comment-text">${KU.escapeHtml(c.content)}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    listEl.querySelectorAll('[data-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Delete this comment?')) return;
+        const id = btn.dataset.del;
+        const { error } = await db.from('comments').delete().eq('id', id);
+        if (error) { KU.toast('Delete failed', 'error'); return; }
+        const idx = comments.findIndex(c => c.id === id);
+        if (idx > -1) comments.splice(idx, 1);
+        renderComments();
+      });
+    });
+  }
+  renderComments();
+
+  const boxEl = document.getElementById('comment-box');
+  if (user) {
+    boxEl.innerHTML = `
+      <div class="comment-form">
+        <img class="comment-avatar" src="${KU.avatarUrl(user.profile?.username || user.email)}" alt="">
+        <div style="flex:1">
+          <textarea id="new-comment" placeholder="Write a comment..." maxlength="1000"></textarea>
+          <div class="submit-row">
+            <button class="btn btn-primary" id="post-comment">Post comment</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.getElementById('post-comment').addEventListener('click', async () => {
+      const ta = document.getElementById('new-comment');
+      const txt = ta.value.trim();
+      if (!txt) return;
+      const btn = document.getElementById('post-comment');
+      btn.disabled = true;
+      const { data, error } = await db.from('comments')
+        .insert({ entry_id: entry.id, user_id: user.id, content: txt })
+        .select('*, profiles(username)')
+        .single();
+      btn.disabled = false;
+      if (error) { KU.toast('Failed to post', 'error'); return; }
+      comments.push(data);
+      ta.value = '';
+      renderComments();
+    });
+  } else {
+    boxEl.innerHTML = `
+      <div class="muted small" style="margin-top:12px; text-align:center;">
+        <a href="login.html" style="color:var(--accent);font-weight:600;">Sign in</a>
+        or
+        <a href="register.html" style="color:var(--accent);font-weight:600;">create an account</a>
+        to comment.
+      </div>
+    `;
+  }
+})();
+</script>
+</body>
+</html>
