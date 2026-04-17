@@ -1,59 +1,85 @@
 // ============================================
 // Animated particle network background
-// White dots + connecting lines with subtle pink tint
+// Thin white lines + pink glow near cursor
 // ============================================
 (function () {
   const canvas = document.getElementById('bg-canvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+  const MAX_DIST = 150;
+  const MOUSE_RADIUS = 220;
+  const BASE_SPEED = 0.22;
+
   let W, H, particles = [];
-  const COUNT_BASE = 70; // will scale with screen size
-  const MAX_DIST = 140;  // max distance for connecting lines
-  const MOUSE = { x: null, y: null, r: 180 };
+  const MOUSE = { x: null, y: null };
 
   function resize() {
-    W = canvas.width = window.innerWidth * window.devicePixelRatio;
-    H = canvas.height = window.innerHeight * window.devicePixelRatio;
+    W = canvas.width = window.innerWidth * DPR;
+    H = canvas.height = window.innerHeight * DPR;
     canvas.style.width = window.innerWidth + 'px';
     canvas.style.height = window.innerHeight + 'px';
-    ctx.scale(1, 1);
     initParticles();
   }
 
   function initParticles() {
-    const count = Math.min(
-      COUNT_BASE,
-      Math.floor((window.innerWidth * window.innerHeight) / 18000)
-    );
+    // Density scales with screen, capped
+    const area = window.innerWidth * window.innerHeight;
+    const count = Math.min(95, Math.max(35, Math.floor(area / 14000)));
     particles = [];
     for (let i = 0; i < count; i++) {
       particles.push({
         x: Math.random() * W,
         y: Math.random() * H,
-        vx: (Math.random() - 0.5) * 0.4 * window.devicePixelRatio,
-        vy: (Math.random() - 0.5) * 0.4 * window.devicePixelRatio,
-        r: (Math.random() * 1.5 + 0.5) * window.devicePixelRatio
+        vx: (Math.random() - 0.5) * BASE_SPEED * DPR,
+        vy: (Math.random() - 0.5) * BASE_SPEED * DPR,
+        r: (Math.random() * 1.2 + 0.4) * DPR,
+        baseR: 0
       });
+      particles[i].baseR = particles[i].r;
     }
   }
 
   function step() {
     ctx.clearRect(0, 0, W, H);
-    const maxDist = MAX_DIST * window.devicePixelRatio;
+    const maxDist = MAX_DIST * DPR;
+    const mr = MOUSE_RADIUS * DPR;
+    const mx = MOUSE.x !== null ? MOUSE.x * DPR : null;
+    const my = MOUSE.y !== null ? MOUSE.y * DPR : null;
 
-    // Draw connections
+    // ---------- Connecting lines ----------
     for (let i = 0; i < particles.length; i++) {
       const a = particles[i];
       for (let j = i + 1; j < particles.length; j++) {
         const b = particles[j];
         const dx = a.x - b.x, dy = a.y - b.y;
-        const d = Math.sqrt(dx*dx + dy*dy);
-        if (d < maxDist) {
+        const d2 = dx*dx + dy*dy;
+        if (d2 < maxDist * maxDist) {
+          const d = Math.sqrt(d2);
           const alpha = 1 - d / maxDist;
-          // Mostly white, tinted slightly pink near mouse
-          ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.25})`;
-          ctx.lineWidth = 1;
+
+          // Pink boost if either endpoint is near the mouse
+          let pinkBoost = 0;
+          if (mx !== null) {
+            const aDist = Math.hypot(a.x - mx, a.y - my);
+            const bDist = Math.hypot(b.x - mx, b.y - my);
+            const closest = Math.min(aDist, bDist);
+            if (closest < mr) pinkBoost = 1 - closest / mr;
+          }
+
+          if (pinkBoost > 0.02) {
+            // Blend white -> pink
+            const r = Math.round(255);
+            const g = Math.round(255 * (1 - pinkBoost * 0.82));
+            const b2 = Math.round(255 * (1 - pinkBoost * 0.42));
+            ctx.strokeStyle = `rgba(${r},${g},${b2},${alpha * (0.22 + pinkBoost * 0.5)})`;
+            ctx.lineWidth = DPR * (1 + pinkBoost * 0.4);
+          } else {
+            ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.18})`;
+            ctx.lineWidth = DPR;
+          }
+
           ctx.beginPath();
           ctx.moveTo(a.x, a.y);
           ctx.lineTo(b.x, b.y);
@@ -62,52 +88,79 @@
       }
     }
 
-    // Mouse attract lines + nudge
-    if (MOUSE.x !== null) {
-      const mr = MOUSE.r * window.devicePixelRatio;
-      const mx = MOUSE.x * window.devicePixelRatio;
-      const my = MOUSE.y * window.devicePixelRatio;
+    // ---------- Mouse tether lines ----------
+    if (mx !== null) {
       for (const p of particles) {
         const dx = p.x - mx, dy = p.y - my;
         const d = Math.sqrt(dx*dx + dy*dy);
         if (d < mr) {
           const alpha = 1 - d / mr;
-          ctx.strokeStyle = `rgba(255, 45, 146, ${alpha * 0.5})`;
-          ctx.lineWidth = 1;
+          ctx.strokeStyle = `rgba(255, 45, 146, ${alpha * 0.55})`;
+          ctx.lineWidth = DPR * (0.8 + alpha * 0.6);
           ctx.beginPath();
           ctx.moveTo(p.x, p.y);
           ctx.lineTo(mx, my);
           ctx.stroke();
-          // gentle repulsion
-          const force = (1 - d / mr) * 0.3;
-          p.vx += (dx / d) * force;
-          p.vy += (dy / d) * force;
+
+          // Gentle repulsion so particles "bloom" out from cursor
+          const force = alpha * 0.35;
+          p.vx += (dx / (d + 0.001)) * force;
+          p.vy += (dy / (d + 0.001)) * force;
         }
       }
+
+      // Soft pink glow ring at cursor
+      const grad = ctx.createRadialGradient(mx, my, 0, mx, my, mr * 0.6);
+      grad.addColorStop(0, 'rgba(255, 45, 146, 0.18)');
+      grad.addColorStop(1, 'rgba(255, 45, 146, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(mx, my, mr * 0.6, 0, Math.PI * 2);
+      ctx.fill();
     }
 
-    // Move + draw particles
+    // ---------- Move + draw particles ----------
     for (const p of particles) {
       p.x += p.vx;
       p.y += p.vy;
-      // friction so mouse boost dies down
-      p.vx *= 0.98;
-      p.vy *= 0.98;
-      // Re-normalize to a baseline drift
-      const baseline = 0.3 * window.devicePixelRatio;
-      if (Math.abs(p.vx) < baseline * 0.5) p.vx += (Math.random() - 0.5) * 0.02;
-      if (Math.abs(p.vy) < baseline * 0.5) p.vy += (Math.random() - 0.5) * 0.02;
+      // friction damps mouse boost but keeps drift
+      p.vx *= 0.97;
+      p.vy *= 0.97;
+      // keep a small baseline drift
+      const target = BASE_SPEED * DPR * 0.8;
+      const speed = Math.hypot(p.vx, p.vy);
+      if (speed < target * 0.4) {
+        p.vx += (Math.random() - 0.5) * 0.04;
+        p.vy += (Math.random() - 0.5) * 0.04;
+      }
 
       // wrap around edges
-      if (p.x < -10) p.x = W + 10;
-      if (p.x > W + 10) p.x = -10;
-      if (p.y < -10) p.y = H + 10;
-      if (p.y > H + 10) p.y = -10;
+      if (p.x < -20) p.x = W + 20;
+      if (p.x > W + 20) p.x = -20;
+      if (p.y < -20) p.y = H + 20;
+      if (p.y > H + 20) p.y = -20;
 
-      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      // Brighten particles near mouse with a subtle pink tint
+      let near = 0;
+      if (mx !== null) {
+        const d = Math.hypot(p.x - mx, p.y - my);
+        if (d < mr) near = 1 - d / mr;
+      }
+
+      if (near > 0.05) {
+        ctx.fillStyle = `rgba(255, ${Math.round(255 - near * 200)}, ${Math.round(255 - near * 110)}, ${0.7 + near * 0.3})`;
+        // subtle halo
+        ctx.shadowColor = 'rgba(255, 45, 146, 0.8)';
+        ctx.shadowBlur = near * 10 * DPR;
+      } else {
+        ctx.fillStyle = 'rgba(255,255,255,0.72)';
+        ctx.shadowBlur = 0;
+      }
+
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, p.baseR * (1 + near * 0.6), 0, Math.PI * 2);
       ctx.fill();
+      ctx.shadowBlur = 0;
     }
 
     requestAnimationFrame(step);
