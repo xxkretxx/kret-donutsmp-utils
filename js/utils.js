@@ -122,7 +122,9 @@ async function renderHeader() {
     <header>
       <div class="nav">
         <a href="index.html" class="logo">
-          <span class="dot">_._</span>kret<span class="dot">_._</span> <span class="muted small">DonutSMP Utils</span>
+          <span class="bracket">_._</span>kret<span class="bracket">_._</span>
+          <span class="divider">//</span>
+          <span class="sub">DonutSMP Utils</span>
         </a>
         <div class="nav-actions">
           ${user ? `
@@ -133,7 +135,7 @@ async function renderHeader() {
             </a>
           ` : `
             <a href="login.html">Sign in</a>
-            <a href="register.html" class="btn-primary">Create account</a>
+            <a href="register.html" class="btn-primary">Register</a>
           `}
         </div>
       </div>
@@ -163,7 +165,7 @@ function renderFooter() {
   host.innerHTML = `
     <footer>
       ${links.length ? `<div class="socials">${links.join('')}</div>` : ''}
-      <div>Made by _._kret_._ · Not affiliated with DonutSMP</div>
+      <div>_._kret_._ <span class="divider">//</span> DonutSMP Utils <span class="divider">//</span> unofficial</div>
     </footer>
   `;
 }
