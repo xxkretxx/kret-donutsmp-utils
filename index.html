@@ -6,31 +6,48 @@
 <title>_._kret_._ DonutSMP Utils</title>
 <meta name="description" content="Traps, farms, bases and exploits for DonutSMP by _._kret_._" />
 <link rel="stylesheet" href="css/style.css" />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='40' fill='%23ff2d92'/%3E%3C/svg%3E" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23ff2d92'/%3E%3Cstop offset='100%25' stop-color='%23b047ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='22' fill='url(%23g)'/%3E%3C/svg%3E" />
 </head>
 <body>
+<div class="aurora"><div class="orb"></div></div>
 <canvas id="bg-canvas"></canvas>
 <div id="header-host"></div>
 
 <main>
   <section class="hero">
-    <div class="pretitle">unofficial utility database</div>
-    <h1>
-      DonutSMP
-      <span class="line2">Utils</span>
+    <div class="hero-badge fade-in">
+      <span class="dot"></span> Unofficial utility database
+    </div>
+    <h1 class="fade-in">
+      <span class="block">DonutSMP</span>
+      <span class="grad">Utilities.</span>
     </h1>
-    <div class="tagline">
-      Traps, farms, bases and exploits — collected, tested and shared by <span class="k">_._kret_._</span>
+    <p class="hero-sub fade-in">
+      Traps, farms, bases and exploits — tested, screenshotted and shared by <span class="kret">_._kret_._</span>
+    </p>
+    <div class="hero-stats fade-in">
+      <div class="hero-stat">
+        <div class="num" id="stat-entries">0</div>
+        <div class="label">Utilities</div>
+      </div>
+      <div class="hero-stat">
+        <div class="num" id="stat-cats">0</div>
+        <div class="label">Categories</div>
+      </div>
+      <div class="hero-stat">
+        <div class="num" id="stat-likes">0</div>
+        <div class="label">Likes</div>
+      </div>
     </div>
   </section>
 
-  <div class="filter-bar">
-    <span class="label">Filter //</span>
+  <div class="filter-bar fade-in">
+    <span class="label">Browse</span>
     <div class="filters" id="filters"></div>
   </div>
 
   <div id="entries" class="grid"></div>
-  <div id="empty" class="empty hidden">No entries match this filter.</div>
+  <div id="empty" class="empty hidden">No entries match this filter yet.</div>
 </main>
 
 <div id="footer-host"></div>
@@ -48,16 +65,28 @@
   const entriesEl = document.getElementById('entries');
   const emptyEl = document.getElementById('empty');
 
-  let activeCategory = null; // null = all
+  let activeCategory = null;
   let categories = [];
   let entries = [];
-  let likeCounts = {};       // entry_id -> count
-  let commentCounts = {};    // entry_id -> count
+  let likeCounts = {};
+  let commentCounts = {};
+
+  function animateCount(el, target) {
+    const dur = 900, start = performance.now(), from = 0;
+    function frame(now) {
+      const t = Math.min(1, (now - start) / dur);
+      const eased = 1 - Math.pow(1 - t, 3);
+      el.textContent = Math.round(from + (target - from) * eased);
+      if (t < 1) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
 
   async function loadCategories() {
     const { data, error } = await db.from('categories').select('*').order('name');
     if (error) { console.error(error); return; }
     categories = data || [];
+    animateCount(document.getElementById('stat-cats'), categories.length);
     renderFilters();
   }
 
@@ -66,7 +95,7 @@
       `<button class="filter-chip ${activeCategory === null ? 'active' : ''}" data-cat="">All</button>`,
       ...categories.map(c => `
         <button class="filter-chip ${activeCategory === c.id ? 'active' : ''}" data-cat="${c.id}">
-          ${c.icon || ''} ${KU.escapeHtml(c.name)}
+          ${KU.escapeHtml(c.name)}
         </button>
       `)
     ];
@@ -88,7 +117,6 @@
     if (error) { console.error(error); return; }
     entries = data || [];
 
-    // Load counts in parallel
     const ids = entries.map(e => e.id);
     if (ids.length) {
       const [{ data: likes }, { data: comments }] = await Promise.all([
@@ -99,7 +127,10 @@
       commentCounts = {};
       (likes || []).forEach(l => { likeCounts[l.entry_id] = (likeCounts[l.entry_id] || 0) + 1; });
       (comments || []).forEach(c => { commentCounts[c.entry_id] = (commentCounts[c.entry_id] || 0) + 1; });
+      const totalLikes = (likes || []).length;
+      animateCount(document.getElementById('stat-likes'), totalLikes);
     }
+    animateCount(document.getElementById('stat-entries'), entries.length);
     renderEntries();
   }
 
@@ -114,15 +145,16 @@
     }
     emptyEl.classList.add('hidden');
     entriesEl.innerHTML = list.map((e, i) => {
-      const num = String(i + 1).padStart(3, '0');
+      const num = '#' + String(i + 1).padStart(3, '0');
+      const delay = Math.min(0.4, i * 0.05);
       return `
-      <a href="entry.html?slug=${encodeURIComponent(e.slug)}" class="card">
-        <div class="card-num">${num}</div>
-        ${e.categories ? `<div class="card-cat-tag">${KU.escapeHtml(e.categories.name)}</div>` : ''}
+      <a href="entry.html?slug=${encodeURIComponent(e.slug)}" class="card fade-in" style="animation-delay:${delay}s">
         <div class="card-thumb">
+          ${e.categories ? `<div class="card-cat-tag">${KU.escapeHtml(e.categories.name)}</div>` : ''}
+          <div class="card-num">${num}</div>
           ${e.screenshot_url
             ? `<img src="${KU.escapeHtml(e.screenshot_url)}" alt="${KU.escapeHtml(e.title)}" loading="lazy">`
-            : `<div class="placeholder">${e.categories?.icon || '□'}</div>`}
+            : `<div class="placeholder">${e.categories?.icon || '◆'}</div>`}
         </div>
         <div class="card-body">
           <div class="card-title">${KU.escapeHtml(e.title)}</div>
