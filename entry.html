@@ -8,6 +8,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='40' fill='%23ff2d92'/%3E%3C/svg%3E" />
 </head>
 <body>
+<div class="aurora"><div class="orb"></div></div>
 <canvas id="bg-canvas"></canvas>
 <div id="header-host"></div>
 
@@ -66,7 +67,7 @@
     <div class="entry-meta-row">
       <span class="difficulty ${entry.difficulty}">${entry.difficulty}</span>
       <span>by <span class="author">${KU.escapeHtml(entry.profiles?.username || '_._kret_._')}</span></span>
-      <span class="dot">//</span>
+      <span class="dot-sep">•</span>
       <span>${KU.timeAgo(entry.created_at)}</span>
     </div>
 
@@ -103,7 +104,7 @@
       </div>
     ` : ''}
 
-    ${tagsHtml ? `<div style="margin-bottom:28px;">${tagsHtml}</div>` : ''}
+    ${tagsHtml ? `<div style="margin-bottom:32px;">${tagsHtml}</div>` : ''}
 
     <div class="section">
       <div class="section-head"><h2>Comments (${comments.length})</h2></div>
