@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Entry · _._kret_._ DonutSMP Utils</title>
 <link rel="stylesheet" href="css/style.css" />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='40' fill='%23ff2d92'/%3E%3C/svg%3E" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23ff2d92'/%3E%3Cstop offset='100%25' stop-color='%23b047ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='22' fill='url(%23g)'/%3E%3C/svg%3E" />
 </head>
 <body>
 <div class="aurora"><div class="orb"></div></div>
@@ -27,10 +27,15 @@
   await KU.renderHeader();
   KU.renderFooter();
 
+  const REACTIONS = ['👍','🔥','💀','❤️','😂','🤯'];
+
   const contentEl = document.getElementById('content');
   const params = new URLSearchParams(location.search);
   const slug = params.get('slug');
   if (!slug) { contentEl.innerHTML = '<div class="empty">No entry selected.</div>'; return; }
+
+  // Increment view count (dedup via sessionStorage)
+  KU.incrementView(slug);
 
   const { data: entry, error } = await db
     .from('entries')
@@ -39,13 +44,13 @@
     .maybeSingle();
 
   if (error || !entry) {
-    contentEl.innerHTML = '<a href="index.html" class="back">← Back</a><div class="empty">Entry not found.</div>';
+    contentEl.innerHTML = '<a href="index.html" class="back">Back</a><div class="empty">Entry not found.</div>';
     return;
   }
 
   const user = await KU.getCurrentUser();
 
-  // Load likes + comments
+  // Load likes, comments (with author profile), and reactions
   const [likesRes, commentsRes] = await Promise.all([
     db.from('likes').select('*').eq('entry_id', entry.id),
     db.from('comments')
@@ -54,11 +59,33 @@
       .order('created_at', { ascending: true })
   ]);
   const likes = likesRes.data || [];
-  const comments = commentsRes.data || [];
-  const userLiked = user ? likes.some(l => l.user_id === user.id) : false;
+  let comments = commentsRes.data || [];
 
+  // Load reactions for all comments at once
+  let reactions = [];
+  if (comments.length) {
+    const { data: reactData } = await db
+      .from('comment_reactions')
+      .select('*')
+      .in('comment_id', comments.map(c => c.id));
+    reactions = reactData || [];
+  }
+  // Group: commentId -> { emoji -> { count, userIds: [] } }
+  function reactionsFor(commentId) {
+    const map = {};
+    for (const r of reactions) {
+      if (r.comment_id !== commentId) continue;
+      if (!map[r.emoji]) map[r.emoji] = { count: 0, userIds: [] };
+      map[r.emoji].count++;
+      map[r.emoji].userIds.push(r.user_id);
+    }
+    return map;
+  }
+
+  const userLiked = user ? likes.some(l => l.user_id === user.id) : false;
   const video = KU.videoEmbed(entry.video_url);
-  const tagsHtml = (entry.tags || []).map(t => `<span class="tag">#${KU.escapeHtml(t)}</span>`).join('');
+  const tagsHtml = (entry.tags || []).map(t => `<span class="tag">${KU.escapeHtml(t)}</span>`).join('');
+  const authorName = entry.profiles?.username || '_._kret_._';
 
   contentEl.innerHTML = `
     <a href="index.html" class="back">Back to all</a>
@@ -66,9 +93,11 @@
     <h1>${KU.escapeHtml(entry.title)}</h1>
     <div class="entry-meta-row">
       <span class="difficulty ${entry.difficulty}">${entry.difficulty}</span>
-      <span>by <span class="author">${KU.escapeHtml(entry.profiles?.username || '_._kret_._')}</span></span>
+      <span>by <a href="user.html?u=${encodeURIComponent(authorName)}" class="author">${KU.escapeHtml(authorName)}</a></span>
       <span class="dot-sep">•</span>
       <span>${KU.timeAgo(entry.created_at)}</span>
+      <span class="dot-sep">•</span>
+      <span class="view-count">${KU.formatCount((entry.view_count || 0) + 1)} views</span>
     </div>
 
     ${entry.screenshot_url ? `<div class="media-block"><img src="${KU.escapeHtml(entry.screenshot_url)}" alt=""></div>` : ''}
@@ -107,7 +136,7 @@
     ${tagsHtml ? `<div style="margin-bottom:32px;">${tagsHtml}</div>` : ''}
 
     <div class="section">
-      <div class="section-head"><h2>Comments (${comments.length})</h2></div>
+      <div class="section-head"><h2>Comments (<span id="cmt-count">${comments.length}</span>)</h2></div>
       <div id="comments-list" class="comments-list"></div>
       <div id="comment-box"></div>
     </div>
@@ -133,84 +162,397 @@
     });
   }
 
-  // ---------- Comments ----------
-  function renderComments() {
-    const listEl = document.getElementById('comments-list');
-    if (!comments.length) {
-      listEl.innerHTML = '<div class="muted small" style="padding:8px 0;">No comments yet. Be the first!</div>';
-      return;
-    }
-    listEl.innerHTML = comments.map(c => {
-      const name = c.profiles?.username || 'user';
-      const canDelete = user && (user.id === c.user_id || user.profile?.is_admin);
-      return `
-        <div class="comment" data-id="${c.id}">
-          <img class="comment-avatar" src="${KU.avatarUrl(name)}" alt="">
-          <div class="comment-body">
-            <div class="comment-head">
-              <span class="comment-user">${KU.escapeHtml(name)}</span>
-              <span class="comment-time">${KU.timeAgo(c.created_at)}</span>
-              ${canDelete ? `<button class="comment-delete" data-del="${c.id}">delete</button>` : ''}
-            </div>
-            <div class="comment-text">${KU.escapeHtml(c.content)}</div>
-          </div>
-        </div>
-      `;
+  // ---------- Comments: tree structure ----------
+  function buildTree(flat) {
+    const byId = {};
+    flat.forEach(c => { byId[c.id] = { ...c, children: [] }; });
+    const roots = [];
+    flat.forEach(c => {
+      if (c.parent_id && byId[c.parent_id]) {
+        byId[c.parent_id].children.push(byId[c.id]);
+      } else {
+        roots.push(byId[c.id]);
+      }
+    });
+    return roots;
+  }
+
+  function renderComment(c, isReply = false) {
+    const name = c.profiles?.username || 'user';
+    const canDelete = user && (user.id === c.user_id || user.profile?.is_admin);
+    const canReply = !!user;
+    const canReact = !!user;
+
+    const rx = reactionsFor(c.id);
+    const reactionChips = Object.entries(rx).map(([emoji, info]) => {
+      const mine = user && info.userIds.includes(user.id);
+      return `<button class="reaction-chip ${mine ? 'reacted' : ''}" data-react-toggle="${c.id}" data-emoji="${emoji}">
+        <span class="emoji">${emoji}</span>
+        <span class="count">${info.count}</span>
+      </button>`;
     }).join('');
 
+    const parentRef = c.parent_id ? (() => {
+      const parent = comments.find(x => x.id === c.parent_id);
+      if (!parent) return '';
+      const pname = parent.profiles?.username || 'user';
+      return `<div class="reply-parent-ref">replying to <a href="#cmt-${parent.id}">@${KU.escapeHtml(pname)}</a></div>`;
+    })() : '';
+
+    return `
+      <div class="comment ${isReply ? 'is-reply' : ''}" id="cmt-${c.id}" data-id="${c.id}">
+        <a href="user.html?u=${encodeURIComponent(name)}">
+          <img class="comment-avatar" src="${KU.avatarUrl(name)}" alt="">
+        </a>
+        <div class="comment-body">
+          ${parentRef}
+          <div class="comment-head">
+            <a href="user.html?u=${encodeURIComponent(name)}" class="comment-user">${KU.escapeHtml(name)}</a>
+            <span class="comment-time">${KU.timeAgo(c.created_at)}</span>
+            ${canDelete ? `<button class="comment-delete" data-del="${c.id}">delete</button>` : ''}
+          </div>
+          <div class="comment-text">${KU.renderMentions(c.content)}</div>
+          <div class="reactions-row" style="margin-top:10px;">
+            ${reactionChips}
+            ${canReact ? `<button class="reaction-add-btn" data-react-add="${c.id}" title="Add reaction">+</button>` : ''}
+          </div>
+          <div class="comment-actions">
+            ${canReply ? `<button class="comment-action-btn reply-btn" data-reply="${c.id}" data-user="${KU.escapeHtml(name)}">↩ Reply</button>` : ''}
+          </div>
+          <div class="reply-form-slot"></div>
+          ${c.children && c.children.length ? `
+            <div class="comment-replies">
+              ${c.children.map(child => renderComment(child, true)).join('')}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderComments() {
+    const listEl = document.getElementById('comments-list');
+    document.getElementById('cmt-count').textContent = comments.length;
+    if (!comments.length) {
+      listEl.innerHTML = '<div class="muted small" style="padding:20px;text-align:center;">No comments yet. Be the first!</div>';
+      return;
+    }
+    const tree = buildTree(comments);
+    listEl.innerHTML = tree.map(c => renderComment(c, false)).join('');
+
+    // Delete
     listEl.querySelectorAll('[data-del]').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!confirm('Delete this comment?')) return;
         const id = btn.dataset.del;
         const { error } = await db.from('comments').delete().eq('id', id);
         if (error) { KU.toast('Delete failed', 'error'); return; }
-        const idx = comments.findIndex(c => c.id === id);
-        if (idx > -1) comments.splice(idx, 1);
+        comments = comments.filter(c => c.id !== id && c.parent_id !== id);
         renderComments();
       });
     });
+
+    // Reply
+    listEl.querySelectorAll('[data-reply]').forEach(btn => {
+      btn.addEventListener('click', () => openReplyForm(btn.dataset.reply, btn.dataset.user));
+    });
+
+    // Reaction toggle (existing emoji)
+    listEl.querySelectorAll('[data-react-toggle]').forEach(btn => {
+      btn.addEventListener('click', () => toggleReaction(btn.dataset.reactToggle, btn.dataset.emoji));
+    });
+
+    // Reaction picker (add new)
+    listEl.querySelectorAll('[data-react-add]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openReactionPicker(btn, btn.dataset.reactAdd);
+      });
+    });
   }
+
+  // ---------- Reactions ----------
+  async function toggleReaction(commentId, emoji) {
+    if (!user) { KU.toast('Sign in to react', 'error'); return; }
+    const existing = reactions.find(r =>
+      r.comment_id === commentId && r.user_id === user.id && r.emoji === emoji);
+    if (existing) {
+      const { error } = await db.from('comment_reactions').delete().eq('id', existing.id);
+      if (error) { KU.toast(error.message, 'error'); return; }
+      reactions = reactions.filter(r => r.id !== existing.id);
+    } else {
+      const { data, error } = await db.from('comment_reactions')
+        .insert({ comment_id: commentId, user_id: user.id, emoji })
+        .select().single();
+      if (error) { KU.toast(error.message, 'error'); return; }
+      reactions.push(data);
+      // Notify comment author (if not self)
+      const target = comments.find(c => c.id === commentId);
+      if (target && target.user_id !== user.id) {
+        await KU.createNotification({
+          userId: target.user_id,
+          type: 'reaction',
+          entryId: entry.id,
+          commentId,
+          payload: { emoji, entry_title: entry.title, entry_slug: entry.slug }
+        });
+      }
+    }
+    renderComments();
+  }
+
+  function openReactionPicker(anchorBtn, commentId) {
+    // Close any open picker first
+    document.querySelectorAll('.emoji-picker').forEach(el => el.remove());
+
+    const picker = document.createElement('div');
+    picker.className = 'emoji-picker';
+    picker.innerHTML = REACTIONS.map(e =>
+      `<button data-pick="${e}" type="button">${e}</button>`
+    ).join('');
+    anchorBtn.style.position = 'relative';
+    anchorBtn.appendChild(picker);
+
+    picker.querySelectorAll('[data-pick]').forEach(b => {
+      b.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        picker.remove();
+        await toggleReaction(commentId, b.dataset.pick);
+      });
+    });
+
+    // Close on outside click
+    setTimeout(() => {
+      document.addEventListener('click', function close() {
+        picker.remove();
+        document.removeEventListener('click', close);
+      }, { once: true });
+    }, 0);
+  }
+
+  // ---------- Reply form ----------
+  function openReplyForm(parentId, parentUsername) {
+    // Close existing reply forms
+    document.querySelectorAll('.reply-form-slot').forEach(el => el.innerHTML = '');
+    const parentEl = document.getElementById('cmt-' + parentId);
+    if (!parentEl) return;
+    const slot = parentEl.querySelector('.reply-form-slot');
+    slot.innerHTML = `
+      <div class="comment-form" style="border-top:1px dashed var(--border);margin-top:10px;padding:12px 0 4px;">
+        <img class="comment-avatar" src="${KU.avatarUrl(user.profile?.username || user.email)}" alt="">
+        <div style="flex:1">
+          <textarea class="reply-textarea" placeholder="Reply to @${parentUsername}..." maxlength="1000">@${parentUsername} </textarea>
+          <div class="submit-row">
+            <button class="btn btn-ghost cancel-reply">Cancel</button>
+            <button class="btn btn-primary post-reply">Reply</button>
+          </div>
+        </div>
+      </div>
+    `;
+    const ta = slot.querySelector('.reply-textarea');
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+
+    slot.querySelector('.cancel-reply').addEventListener('click', () => slot.innerHTML = '');
+    slot.querySelector('.post-reply').addEventListener('click', async () => {
+      const txt = ta.value.trim();
+      if (!txt) return;
+      await postComment(txt, parentId);
+      slot.innerHTML = '';
+    });
+  }
+
+  // ---------- Posting a comment ----------
+  async function postComment(content, parentId = null) {
+    const { data, error } = await db.from('comments')
+      .insert({ entry_id: entry.id, user_id: user.id, content, parent_id: parentId })
+      .select('*, profiles(username)')
+      .single();
+    if (error) { KU.toast('Failed to post', 'error'); return; }
+    comments.push(data);
+    renderComments();
+
+    // --- Notifications ---
+    // 1. Reply notification for parent comment author
+    if (parentId) {
+      const parent = comments.find(c => c.id === parentId);
+      if (parent && parent.user_id !== user.id) {
+        await KU.createNotification({
+          userId: parent.user_id,
+          type: 'reply',
+          entryId: entry.id,
+          commentId: data.id,
+          payload: {
+            preview: content.slice(0, 160),
+            entry_title: entry.title,
+            entry_slug: entry.slug
+          }
+        });
+      }
+    }
+
+    // 2. Mention notifications
+    const mentions = KU.parseMentions(content);
+    const myUsername = user.profile?.username;
+    for (const uname of mentions) {
+      if (uname === myUsername) continue;
+      const { data: target } = await db.rpc('get_profile_by_username', { uname });
+      if (target && target.length && target[0].id !== user.id) {
+        await KU.createNotification({
+          userId: target[0].id,
+          type: 'mention',
+          entryId: entry.id,
+          commentId: data.id,
+          payload: {
+            preview: content.slice(0, 160),
+            entry_title: entry.title,
+            entry_slug: entry.slug
+          }
+        });
+      }
+    }
+  }
+
   renderComments();
 
+  // ---------- Main comment form ----------
   const boxEl = document.getElementById('comment-box');
   if (user) {
     boxEl.innerHTML = `
       <div class="comment-form">
         <img class="comment-avatar" src="${KU.avatarUrl(user.profile?.username || user.email)}" alt="">
-        <div style="flex:1">
-          <textarea id="new-comment" placeholder="Write a comment..." maxlength="1000"></textarea>
+        <div style="flex:1;position:relative;">
+          <textarea id="new-comment" placeholder="Write a comment... use @ to mention someone" maxlength="1000"></textarea>
           <div class="submit-row">
             <button class="btn btn-primary" id="post-comment">Post comment</button>
           </div>
         </div>
       </div>
     `;
+
+    setupMentionAutocomplete(document.getElementById('new-comment'));
+
     document.getElementById('post-comment').addEventListener('click', async () => {
       const ta = document.getElementById('new-comment');
       const txt = ta.value.trim();
       if (!txt) return;
       const btn = document.getElementById('post-comment');
       btn.disabled = true;
-      const { data, error } = await db.from('comments')
-        .insert({ entry_id: entry.id, user_id: user.id, content: txt })
-        .select('*, profiles(username)')
-        .single();
-      btn.disabled = false;
-      if (error) { KU.toast('Failed to post', 'error'); return; }
-      comments.push(data);
+      await postComment(txt, null);
       ta.value = '';
-      renderComments();
+      btn.disabled = false;
     });
   } else {
     boxEl.innerHTML = `
-      <div class="muted small" style="margin-top:12px; text-align:center;">
-        <a href="login.html" style="color:var(--accent);font-weight:600;">Sign in</a>
-        or
-        <a href="register.html" style="color:var(--accent);font-weight:600;">create an account</a>
-        to comment.
+      <div class="sign-in-prompt">
+        <a href="login.html">Sign in</a> or <a href="register.html">create an account</a> to comment.
       </div>
     `;
   }
+
+  // ---------- Mention autocomplete ----------
+  function setupMentionAutocomplete(textarea) {
+    if (!textarea) return;
+    let dropdown = null;
+    let activeIndex = 0;
+    let currentMatches = [];
+
+    function closeDropdown() {
+      if (dropdown) { dropdown.remove(); dropdown = null; }
+    }
+
+    async function searchUsers(q) {
+      const { data } = await db
+        .from('profiles')
+        .select('username')
+        .ilike('username', q + '%')
+        .limit(6);
+      return data || [];
+    }
+
+    function getCaretCoord(ta) {
+      // Simple: anchor to textarea bottom-left
+      const r = ta.getBoundingClientRect();
+      return { left: r.left + window.scrollX, top: r.bottom + window.scrollY + 4 };
+    }
+
+    textarea.addEventListener('input', async () => {
+      const v = textarea.value;
+      const pos = textarea.selectionStart;
+      // Find @word before caret
+      const before = v.slice(0, pos);
+      const m = before.match(/@([a-zA-Z0-9_.-]{0,24})$/);
+      if (!m) { closeDropdown(); return; }
+
+      const q = m[1];
+      if (q.length < 1) { closeDropdown(); return; }
+
+      const results = await searchUsers(q);
+      if (!results.length) { closeDropdown(); return; }
+
+      currentMatches = results;
+      activeIndex = 0;
+
+      if (!dropdown) {
+        dropdown = document.createElement('div');
+        dropdown.className = 'mention-dropdown';
+        document.body.appendChild(dropdown);
+      }
+      const coord = getCaretCoord(textarea);
+      dropdown.style.left = coord.left + 'px';
+      dropdown.style.top = coord.top + 'px';
+      renderDropdown();
+    });
+
+    function renderDropdown() {
+      if (!dropdown) return;
+      dropdown.innerHTML = currentMatches.map((u, i) => `
+        <div class="mention-item ${i === activeIndex ? 'active' : ''}" data-i="${i}">
+          <img src="${KU.avatarUrl(u.username)}" alt="">
+          <span>@${KU.escapeHtml(u.username)}</span>
+        </div>
+      `).join('');
+      dropdown.querySelectorAll('.mention-item').forEach(el => {
+        el.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          pickMention(currentMatches[parseInt(el.dataset.i)].username);
+        });
+      });
+    }
+
+    function pickMention(username) {
+      const v = textarea.value;
+      const pos = textarea.selectionStart;
+      const before = v.slice(0, pos).replace(/@([a-zA-Z0-9_.-]{0,24})$/, '@' + username + ' ');
+      const after = v.slice(pos);
+      textarea.value = before + after;
+      textarea.focus();
+      const newPos = before.length;
+      textarea.setSelectionRange(newPos, newPos);
+      closeDropdown();
+    }
+
+    textarea.addEventListener('keydown', (e) => {
+      if (!dropdown || !currentMatches.length) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        activeIndex = (activeIndex + 1) % currentMatches.length;
+        renderDropdown();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        activeIndex = (activeIndex - 1 + currentMatches.length) % currentMatches.length;
+        renderDropdown();
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        pickMention(currentMatches[activeIndex].username);
+      } else if (e.key === 'Escape') {
+        closeDropdown();
+      }
+    });
+
+    textarea.addEventListener('blur', () => setTimeout(closeDropdown, 120));
+  }
+
 })();
 </script>
 </body>
