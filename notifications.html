@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Notifications · _._kret_._ DonutSMP Utils</title>
+<link rel="stylesheet" href="css/style.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23ff2d92'/%3E%3Cstop offset='100%25' stop-color='%23b047ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='22' fill='url(%23g)'/%3E%3C/svg%3E" />
+</head>
+<body>
+<div class="aurora"><div class="orb"></div></div>
+<canvas id="bg-canvas"></canvas>
+<div id="header-host"></div>
+
+<main>
+  <div id="notif-content"><div class="empty">Loading...</div></div>
+</main>
+
+<div id="footer-host"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/background.js"></script>
+<script>
+(async function () {
+  await KU.renderHeader();
+  KU.renderFooter();
+
+  const contentEl = document.getElementById('notif-content');
+  const user = await KU.getCurrentUser();
+
+  if (!user) {
+    contentEl.innerHTML = `
+      <div class="empty">
+        <a href="login.html" style="color:var(--pink-2);font-weight:600;">Sign in</a> to view your notifications.
+      </div>
+    `;
+    return;
+  }
+
+  // Load notifications with actor profile info
+  const { data: notifs } = await db
+    .from('notifications')
+    .select('*, actor:actor_id(username)')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  const unread = (notifs || []).filter(n => !n.read_at);
+
+  contentEl.innerHTML = `
+    <a href="index.html" class="back">Back to all</a>
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:28px;flex-wrap:wrap;">
+      <h1 style="font-family:var(--font-display);font-size:clamp(32px,5vw,48px);font-weight:800;letter-spacing:-0.03em;line-height:1;">
+        Notifications
+      </h1>
+      ${unread.length > 0 ? `<button class="btn btn-ghost mark-all-btn" id="mark-all">Mark all as read</button>` : ''}
+    </div>
+
+    <div id="notif-list" class="notif-list">
+      ${!notifs || notifs.length === 0
+        ? '<div class="notif-empty">No notifications yet.<br>When someone replies, mentions or reacts to you, they will show up here.</div>'
+        : notifs.map(n => renderNotif(n)).join('')
+      }
+    </div>
+  `;
+
+  function renderNotif(n) {
+    const actorName = n.actor?.username || 'someone';
+    const p = n.payload || {};
+    const entryLink = p.entry_slug
+      ? `entry.html?slug=${encodeURIComponent(p.entry_slug)}${n.comment_id ? '#cmt-' + n.comment_id : ''}`
+      : '#';
+    const entryTitle = p.entry_title || 'an entry';
+
+    let actionText = '';
+    let preview = '';
+    if (n.type === 'mention') {
+      actionText = `<span class="actor">@${KU.escapeHtml(actorName)}</span> mentioned you in <a href="${entryLink}" class="title-ref">${KU.escapeHtml(entryTitle)}</a>`;
+      if (p.preview) preview = `<div class="notif-preview">${KU.renderMentions(p.preview)}</div>`;
+    } else if (n.type === 'reply') {
+      actionText = `<span class="actor">@${KU.escapeHtml(actorName)}</span> replied to your comment on <a href="${entryLink}" class="title-ref">${KU.escapeHtml(entryTitle)}</a>`;
+      if (p.preview) preview = `<div class="notif-preview">${KU.renderMentions(p.preview)}</div>`;
+    } else if (n.type === 'reaction') {
+      const emoji = p.emoji || '👍';
+      actionText = `<span class="actor">@${KU.escapeHtml(actorName)}</span> reacted ${emoji} to your comment on <a href="${entryLink}" class="title-ref">${KU.escapeHtml(entryTitle)}</a>`;
+    }
+
+    return `
+      <div class="notif-item ${!n.read_at ? 'unread' : ''}" data-id="${n.id}">
+        <a href="user.html?u=${encodeURIComponent(actorName)}">
+          <img class="notif-avatar" src="${KU.avatarUrl(actorName)}" alt="">
+        </a>
+        <div class="notif-body">
+          <div class="notif-text">${actionText}</div>
+          ${preview}
+          <div class="notif-time">${KU.timeAgo(n.created_at)}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Mark individual as read when clicked
+  contentEl.querySelectorAll('.notif-item').forEach(item => {
+    item.addEventListener('click', async (e) => {
+      // Let the actual link navigate, but mark read first
+      const id = item.dataset.id;
+      if (item.classList.contains('unread')) {
+        await db.from('notifications').update({ read_at: new Date().toISOString() }).eq('id', id);
+        item.classList.remove('unread');
+      }
+    });
+  });
+
+  // Mark all
+  const markAllBtn = document.getElementById('mark-all');
+  if (markAllBtn) {
+    markAllBtn.addEventListener('click', async () => {
+      markAllBtn.disabled = true;
+      const { error } = await db.from('notifications')
+        .update({ read_at: new Date().toISOString() })
+        .eq('user_id', user.id)
+        .is('read_at', null);
+      if (error) { KU.toast(error.message, 'error'); markAllBtn.disabled = false; return; }
+      contentEl.querySelectorAll('.notif-item.unread').forEach(el => el.classList.remove('unread'));
+      markAllBtn.remove();
+      KU.toast('All marked as read', 'ok');
+    });
+  }
+})();
+</script>
+</body>
+</html>

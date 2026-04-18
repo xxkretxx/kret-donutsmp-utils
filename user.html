@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Profile · _._kret_._ DonutSMP Utils</title>
+<link rel="stylesheet" href="css/style.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23ff2d92'/%3E%3Cstop offset='100%25' stop-color='%23b047ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='22' fill='url(%23g)'/%3E%3C/svg%3E" />
+</head>
+<body>
+<div class="aurora"><div class="orb"></div></div>
+<canvas id="bg-canvas"></canvas>
+<div id="header-host"></div>
+
+<main>
+  <div id="profile-content"><div class="empty">Loading...</div></div>
+</main>
+
+<div id="footer-host"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/background.js"></script>
+<script>
+(async function () {
+  await KU.renderHeader();
+  KU.renderFooter();
+
+  const contentEl = document.getElementById('profile-content');
+  const params = new URLSearchParams(location.search);
+  const username = params.get('u');
+
+  if (!username) {
+    contentEl.innerHTML = '<div class="empty">No user specified.</div>';
+    return;
+  }
+
+  document.title = `@${username} · _._kret_._ DonutSMP Utils`;
+
+  // Load profile
+  const { data: profile } = await db
+    .from('profiles')
+    .select('*')
+    .eq('username', username)
+    .maybeSingle();
+
+  if (!profile) {
+    contentEl.innerHTML = `
+      <a href="index.html" class="back">Back</a>
+      <div class="empty">User @${KU.escapeHtml(username)} not found.</div>
+    `;
+    return;
+  }
+
+  // Load their activity: comments (with entry info), and likes count
+  const [commentsRes, likesRes, entriesRes] = await Promise.all([
+    db.from('comments')
+      .select('*, entries(title, slug)')
+      .eq('user_id', profile.id)
+      .order('created_at', { ascending: false })
+      .limit(30),
+    db.from('likes').select('id', { count: 'exact', head: true }).eq('user_id', profile.id),
+    db.from('entries').select('id', { count: 'exact', head: true }).eq('author_id', profile.id)
+  ]);
+
+  const comments = commentsRes.data || [];
+  const likesCount = likesRes.count || 0;
+  const entriesCount = entriesRes.count || 0;
+
+  const joined = new Date(profile.created_at).toLocaleDateString(undefined, {
+    year: 'numeric', month: 'long'
+  });
+
+  contentEl.innerHTML = `
+    <a href="index.html" class="back">Back to all</a>
+
+    <div class="profile-hero">
+      <div class="profile-avatar">
+        <img src="${KU.avatarUrl(profile.username)}" alt="avatar">
+      </div>
+      <div class="profile-info">
+        <div class="handle-big">@${KU.escapeHtml(profile.username)}${profile.is_admin ? '<span class="admin-badge">Admin</span>' : ''}</div>
+        <div class="joined">Joined ${joined}</div>
+        <div class="profile-stats">
+          <div class="profile-stat">
+            <div class="num">${KU.formatCount(comments.length)}</div>
+            <div class="label">Recent comments</div>
+          </div>
+          <div class="profile-stat">
+            <div class="num">${KU.formatCount(likesCount)}</div>
+            <div class="label">Likes given</div>
+          </div>
+          ${entriesCount > 0 ? `
+            <div class="profile-stat">
+              <div class="num">${KU.formatCount(entriesCount)}</div>
+              <div class="label">Entries posted</div>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    </div>
+
+    <h2 class="profile-section-title">Recent activity</h2>
+
+    <div id="activity-list">
+      ${comments.length === 0
+        ? '<div class="empty">No comments yet.</div>'
+        : comments.map(c => `
+          <div class="activity-item">
+            <div class="activity-meta">
+              <span>Commented on</span>
+              ${c.entries
+                ? `<a href="entry.html?slug=${encodeURIComponent(c.entries.slug)}">${KU.escapeHtml(c.entries.title)}</a>`
+                : '<span class="muted">(deleted entry)</span>'}
+              <span class="dot-sep">•</span>
+              <span>${KU.timeAgo(c.created_at)}</span>
+            </div>
+            <div class="activity-text">${KU.renderMentions(c.content)}</div>
+          </div>
+        `).join('')
+      }
+    </div>
+  `;
+})();
+</script>
+</body>
+</html>
