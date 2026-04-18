@@ -118,6 +118,8 @@ async function renderHeader() {
   const user = await getCurrentUser();
   const isAdmin = user?.profile?.is_admin;
 
+  const bellHtml = user ? await renderNotifBell(user) : '';
+
   host.innerHTML = `
     <header>
       <div class="nav">
@@ -131,10 +133,12 @@ async function renderHeader() {
         <div class="nav-actions">
           ${user ? `
             ${isAdmin ? '<a href="admin.html">Admin</a>' : ''}
-            <a href="#" id="logout-btn" class="user-chip">
+            ${bellHtml}
+            <a href="user.html?u=${encodeURIComponent(user.profile?.username || '')}" class="user-chip" title="Your profile">
               <img src="${avatarUrl(user.profile?.username || user.email)}" alt="avatar">
               ${escapeHtml(user.profile?.username || user.email)}
             </a>
+            <a href="#" id="logout-btn" class="logout-link" title="Sign out">↗</a>
           ` : `
             <a href="login.html">Sign in</a>
             <a href="register.html" class="btn-primary">Register</a>
@@ -174,5 +178,73 @@ function renderFooter() {
 
 window.KU = {
   db, avatarUrl, toast, getCurrentUser, requireAdmin,
-  timeAgo, slugify, escapeHtml, videoEmbed, renderHeader, renderFooter
+  timeAgo, slugify, escapeHtml, videoEmbed, renderHeader, renderFooter,
+  parseMentions, renderMentions, createNotification, formatCount,
+  incrementView, renderNotifBell
 };
+
+// ---------- Mentions ----------
+// Extract @usernames from text. Returns array of unique usernames (no @).
+function parseMentions(text) {
+  if (!text) return [];
+  const matches = text.match(/@([a-zA-Z0-9_.-]{3,24})/g) || [];
+  return [...new Set(matches.map(m => m.slice(1)))];
+}
+
+// Render @mentions as pink highlighted spans (HTML safe).
+function renderMentions(text) {
+  if (!text) return '';
+  const escaped = escapeHtml(text);
+  return escaped.replace(/@([a-zA-Z0-9_.-]{3,24})/g,
+    '<a href="user.html?u=$1" class="mention">@$1</a>');
+}
+
+// ---------- Notifications ----------
+async function createNotification({ userId, type, entryId, commentId, payload = {} }) {
+  const me = await getCurrentUser();
+  if (!me || me.id === userId) return; // don't notify yourself
+  await db.from('notifications').insert({
+    user_id: userId,
+    type,
+    actor_id: me.id,
+    entry_id: entryId || null,
+    comment_id: commentId || null,
+    payload
+  });
+}
+
+// ---------- Format ----------
+function formatCount(n) {
+  if (n == null) return '0';
+  if (n < 1000) return String(n);
+  if (n < 10000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  if (n < 1000000) return Math.floor(n / 1000) + 'k';
+  return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+}
+
+// ---------- Views ----------
+async function incrementView(slug) {
+  // Use sessionStorage so rapid refreshes don't inflate the count
+  const key = 'viewed:' + slug;
+  if (sessionStorage.getItem(key)) return;
+  sessionStorage.setItem(key, '1');
+  try {
+    await db.rpc('increment_view', { entry_slug: slug });
+  } catch (e) { /* ignore */ }
+}
+
+// ---------- Notification bell ----------
+async function renderNotifBell(user) {
+  if (!user) return '';
+  const { count } = await db
+    .from('notifications')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', user.id)
+    .is('read_at', null);
+  return `
+    <a href="notifications.html" class="notif-bell" title="Notifications">
+      <span class="bell-icon">🔔</span>
+      ${count && count > 0 ? `<span class="bell-badge">${count > 99 ? '99+' : count}</span>` : ''}
+    </a>
+  `;
+}
