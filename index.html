@@ -131,10 +131,15 @@
       commentCounts = {};
       (likes || []).forEach(l => { likeCounts[l.entry_id] = (likeCounts[l.entry_id] || 0) + 1; });
       (comments || []).forEach(c => { commentCounts[c.entry_id] = (commentCounts[c.entry_id] || 0) + 1; });
-      const totalLikes = (likes || []).length;
+      // Add bonus counts
+      entries.forEach(e => {
+        likeCounts[e.id] = (likeCounts[e.id] || 0) + (e.bonus_likes || 0);
+        commentCounts[e.id] = (commentCounts[e.id] || 0) + (e.bonus_comments || 0);
+      });
+      const totalLikes = entries.reduce((sum, e) => sum + (likeCounts[e.id] || 0), 0);
       animateCount(document.getElementById('stat-likes'), totalLikes);
     }
-    const totalViews = entries.reduce((sum, e) => sum + (e.view_count || 0), 0);
+    const totalViews = entries.reduce((sum, e) => sum + (e.view_count || 0) + (e.bonus_views || 0), 0);
     animateCount(document.getElementById('stat-views'), totalViews);
     animateCount(document.getElementById('stat-entries'), entries.length);
     renderEntries();
@@ -169,7 +174,7 @@
             <span class="stats">
               <span><span class="heart">♥</span> ${KU.formatCount(likeCounts[e.id] || 0)}</span>
               <span>◆ ${KU.formatCount(commentCounts[e.id] || 0)}</span>
-              <span class="views">${KU.formatCount(e.view_count || 0)}</span>
+              <span class="views">${KU.formatCount((e.view_count || 0) + (e.bonus_views || 0))}</span>
             </span>
           </div>
         </div>
