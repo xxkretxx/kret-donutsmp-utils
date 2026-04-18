@@ -38,6 +38,10 @@
         <div class="num" id="stat-likes">0</div>
         <div class="label">Likes</div>
       </div>
+      <div class="hero-stat">
+        <div class="num" id="stat-views">0</div>
+        <div class="label">Views</div>
+      </div>
     </div>
   </section>
 
@@ -130,6 +134,8 @@
       const totalLikes = (likes || []).length;
       animateCount(document.getElementById('stat-likes'), totalLikes);
     }
+    const totalViews = entries.reduce((sum, e) => sum + (e.view_count || 0), 0);
+    animateCount(document.getElementById('stat-views'), totalViews);
     animateCount(document.getElementById('stat-entries'), entries.length);
     renderEntries();
   }
@@ -161,8 +167,9 @@
           <div class="card-meta">
             <span class="difficulty ${e.difficulty}">${e.difficulty}</span>
             <span class="stats">
-              <span><span class="heart">♥</span> ${likeCounts[e.id] || 0}</span>
-              <span>◆ ${commentCounts[e.id] || 0}</span>
+              <span><span class="heart">♥</span> ${KU.formatCount(likeCounts[e.id] || 0)}</span>
+              <span>◆ ${KU.formatCount(commentCounts[e.id] || 0)}</span>
+              <span class="views">${KU.formatCount(e.view_count || 0)}</span>
             </span>
           </div>
         </div>
