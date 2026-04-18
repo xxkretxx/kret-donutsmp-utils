@@ -97,7 +97,7 @@
       <span class="dot-sep">•</span>
       <span>${KU.timeAgo(entry.created_at)}</span>
       <span class="dot-sep">•</span>
-      <span class="view-count">${KU.formatCount((entry.view_count || 0) + 1)} views</span>
+      <span class="view-count">${KU.formatCount((entry.view_count || 0) + (entry.bonus_views || 0) + 1)} views</span>
     </div>
 
     ${entry.screenshot_url ? `<div class="media-block"><img src="${KU.escapeHtml(entry.screenshot_url)}" alt=""></div>` : ''}
@@ -114,8 +114,8 @@
     <div class="like-row">
       <button class="btn-like ${userLiked ? 'liked' : ''}" id="like-btn" ${!user ? 'disabled title="Sign in to like"' : ''}>
         <span class="heart">♥</span>
-        <span id="like-count">${likes.length}</span>
-        <span>${likes.length === 1 ? 'like' : 'likes'}</span>
+        <span id="like-count">${likes.length + (entry.bonus_likes || 0)}</span>
+        <span>${(likes.length + (entry.bonus_likes || 0)) === 1 ? 'like' : 'likes'}</span>
       </button>
     </div>
 
@@ -136,7 +136,7 @@
     ${tagsHtml ? `<div style="margin-bottom:32px;">${tagsHtml}</div>` : ''}
 
     <div class="section">
-      <div class="section-head"><h2>Comments (<span id="cmt-count">${comments.length}</span>)</h2></div>
+      <div class="section-head"><h2>Comments (<span id="cmt-count">${comments.length + (entry.bonus_comments || 0)}</span>)</h2></div>
       <div id="comments-list" class="comments-list"></div>
       <div id="comment-box"></div>
     </div>
@@ -145,7 +145,7 @@
   // ---------- Like handler ----------
   const likeBtn = document.getElementById('like-btn');
   let liked = userLiked;
-  let likeCount = likes.length;
+  let likeCount = likes.length + (entry.bonus_likes || 0);
   if (likeBtn && user) {
     likeBtn.addEventListener('click', async () => {
       likeBtn.disabled = true;
@@ -232,7 +232,7 @@
 
   function renderComments() {
     const listEl = document.getElementById('comments-list');
-    document.getElementById('cmt-count').textContent = comments.length;
+    document.getElementById('cmt-count').textContent = comments.length + (entry.bonus_comments || 0);
     if (!comments.length) {
       listEl.innerHTML = '<div class="muted small" style="padding:20px;text-align:center;">No comments yet. Be the first!</div>';
       return;
